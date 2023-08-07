@@ -400,3 +400,6 @@ pub fn main() !void {
 // definition if needed. It did seem like two anonymous structs (tuples) are not
 // equal even if they have the same fields, which was kinda meh but not hard to
 // change.
+
+// My testing indicates that its fine until generics get involved, then you need
+// to introduce a Pair type
