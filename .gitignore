@@ -1,0 +1,7 @@
+*.o
+*/part-1
+*/part-2
+*/hello_zig
+
+# I've heard we shouldn't commit our inputs... for reasons?
+*.txt
