@@ -45,7 +45,6 @@ pub fn main() !void {
 
         try std_out.print("\n", .{});
     }
-    
 }
 
 // The relative difficulty between this one and the last one is... surprising.
