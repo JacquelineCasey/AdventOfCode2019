@@ -262,9 +262,9 @@ const Tile = enum(u3) {
         return switch (self) {
             .Empty => ' ',
             .Wall => '#',
-            .Block => '.',
+            .Block => 'O',
             .Paddle => '=',
-            .Ball => 'o',
+            .Ball => '*',
         };
     }
 };
