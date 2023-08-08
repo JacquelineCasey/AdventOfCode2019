@@ -18,3 +18,15 @@ capture (no pointer).
 Iterators are defined as anything that implements an optional returning next().
 I don't think there is any for or while loop sugar for iterators. The apparent sugar
 comes from while loop's support for optionals.
+
+======
+
+comptime types are complex: 
+
+EX:
+
+fn absCast(x: anytype) switch (@typeInfo(@TypeOf(x))) {
+    .ComptimeInt => comptime_int,
+    .Int => |int_info| std.meta.Int(.unsigned, int_info.bits),
+    else => @compileError("absCast only accepts integers"),
+}
