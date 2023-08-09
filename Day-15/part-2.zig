@@ -87,7 +87,7 @@ const IntCodeComputer = struct {
         return self.output.pop();
     } 
 
-    /// 1 = immediate mode. 0 = position mode
+    /// 2 = realtive mode, 1 = immediate mode, 0 = position mode
     /// param numbers start at 1
     fn get_param_mode(instruction: i64, param_num: usize) i64 {
         const divisor = std.math.pow(i64, 10, @as(i64, @intCast(1 + param_num))); 
