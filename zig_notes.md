@@ -30,3 +30,10 @@ fn absCast(x: anytype) switch (@typeInfo(@TypeOf(x))) {
     .Int => |int_info| std.meta.Int(.unsigned, int_info.bits),
     else => @compileError("absCast only accepts integers"),
 }
+
+======
+
+-O ReleaseSafe makes compilation slower and runtime faster (~7 times faster for at least one
+of my programs), but it keeps all the Safety features (though maybe no debugging features).
+-O ReleaseFast got around 10 times faster, but removes safety features.
+
