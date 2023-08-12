@@ -22,33 +22,15 @@ fn Graph(comptime Key: type, comptime Value: type) type {
     return struct {
         const Self = @This();
 
-        const EdgeIterator = struct {
-            graph: *const Self,
-            index: usize,
-            i: usize,
-
-            fn next(self: *EdgeIterator) ?Edge(Key) {
-                const edges = self.graph.out_edges.get(self.index).?;
-
-                if (self.i >= edges.items.len) 
-                    return null;
-                
-                const internal_edge = edges.items[self.i];
-                self.i += 1;
-
-                return .{
-                    .neighbor = self.graph.index_to_key.get(internal_edge.neighbor).?,
-                    .weight = internal_edge.weight,
-                };
-            }
-        };
-
         alloc: std.mem.Allocator,
         key_to_index: std.AutoHashMap(Key, usize),
         index_to_key: std.AutoHashMap(usize, Key),
         out_edges: std.AutoHashMap(usize, std.ArrayList(InternalEdge)),
         data: std.AutoHashMap(usize, Value),
         next_index: usize,
+
+        // PS: If you are interested in optimizing this, you could easily combine
+        // the 3 usize -> X hashtables.
 
         fn init(alloc: std.mem.Allocator) Self {
             return .{
@@ -249,6 +231,27 @@ fn Graph(comptime Key: type, comptime Value: type) type {
                 .i = 0,
             };
         }
+
+        const EdgeIterator = struct {
+            graph: *const Self,
+            index: usize,
+            i: usize,
+
+            fn next(self: *EdgeIterator) ?Edge(Key) {
+                const edges = self.graph.out_edges.get(self.index).?;
+
+                if (self.i >= edges.items.len) 
+                    return null;
+                
+                const internal_edge = edges.items[self.i];
+                self.i += 1;
+
+                return .{
+                    .neighbor = self.graph.index_to_key.get(internal_edge.neighbor).?,
+                    .weight = internal_edge.weight,
+                };
+            }
+        };
     };
 }
 
@@ -292,11 +295,10 @@ pub fn main() !void {
             ch_y += 1;
         }
         else {
-            if (ch != '#' and ch != '@') {
+            if (ch != '#') {
                 try tiles.put(.{ch_x, ch_y}, ch);
             }
-            else if (ch == '@') {  // We treat @ as . going forward
-                try tiles.put(.{ch_x, ch_y}, '.');
+            else if (ch == '@') {
                 maybe_start_pair = Pair {ch_x, ch_y};
                 start_pairs += 1;
             }
@@ -322,6 +324,11 @@ pub fn main() !void {
         _ = tiles.remove(.{start_x, start_y + 1});
         _ = tiles.remove(.{start_x, start_y - 1});
 
+        try tiles.put(.{start_x + 1, start_y + 1}, '@');
+        try tiles.put(.{start_x + 1, start_y - 1}, '@');
+        try tiles.put(.{start_x - 1, start_y + 1}, '@');
+        try tiles.put(.{start_x - 1, start_y - 1}, '@');
+
         try start_tiles.append(.{start_x + 1, start_y + 1});
         try start_tiles.append(.{start_x + 1, start_y - 1});
         try start_tiles.append(.{start_x - 1, start_y + 1});
@@ -341,6 +348,29 @@ pub fn main() !void {
 // Also ban moves from keys to already collected keys. The graph structure has
 // to tell you which keys you need to collect first, which includes both doors and
 // intermediary keys that you "have to" grab first just because they are in between.
+
+// TODO: Write contract() for the graph, and then start the algorithm itself:
+//
+// Build graphs from the 4 quadrants of the maze, with a node per tile.
+// DFS each graph to populate a prerequisites field on all of the keys. A key has
+// a prerequisite if it is behind a door, or behind another key (soft prerequisite: 
+// it is always beneficial to pick up that key first).
+// 
+// Contract all `.` nodes and all door nodes. We now have a graph that is only keys
+//
+// Perform a sort of Quadruple Dijkstra. Its basically normal dijkstra, except the
+// states describe the locations of the 4 robots (so [4]u8) and a list of gathered
+// keys (we can do the bitarray thing again). We'll need a priority queue, which
+// Zig has, but it doesn't have decrease key (typical...) so we'll do the reinsert
+// trick and use a supplementary hashtable.
+//
+// Each state's neighbors are basically all the states where exactly one of the
+// robots moves to a node (no '@') for which all the prerequisites are gathered.
+
+
+// Contract all '.' nodes that have degree 2 or fewer (we keep higher degree ones
+// because we want a tree).
+
 
 
 // ---- Graph Tests ---- //
