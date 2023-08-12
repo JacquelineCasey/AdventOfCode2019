@@ -25,7 +25,7 @@ pub fn main() !void {
     defer alloc.free(input);
 
     // All tiles, except walls
-    var tiles = std.AutoArrayHashMap(Pair, u8).init(alloc);
+    var tiles = std.AutoHashMap(Pair, u8).init(alloc);
     defer tiles.deinit();
 
     var maybe_start_pair: ?Pair = null;
