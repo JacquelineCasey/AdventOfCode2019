@@ -483,7 +483,7 @@ fn brute_force(computer: *IntCodeComputer, dir: []const u8, arena_alloc: std.mem
     
     var a: u32 = 0;  // binary number representing which items to drop (1 = drop);
     while (std.mem.eql(u8, (try move(computer, dir, arena_alloc)).name, "Security Checkpoint")) : (a += 1) {
-        if (a == 255) {
+        if (a == 256) {
             return;
         }
        

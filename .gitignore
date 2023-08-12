@@ -2,6 +2,7 @@
 */part-1
 */part-2
 */hello_zig
+*/part-1-auto
 
 # I've heard we shouldn't commit our inputs... for reasons?
 *.txt
