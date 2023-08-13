@@ -143,6 +143,10 @@ fn Graph(comptime Key: type, comptime Value: type) type {
             const index_1 = self.key_to_index.get(key_1) orelse return error.KeyNotFound;
             const index_2 = self.key_to_index.get(key_2) orelse return error.KeyNotFound;
 
+            return self._add_edges_indices(index_1, index_2, weight);
+        }
+
+        fn _add_edges_indices(self: *Self, index_1: usize, index_2: usize, weight: u32) !void {
             var edge_list_1 = self.out_edges.getPtr(index_1).?;
 
             var found_1 = false;
@@ -178,6 +182,10 @@ fn Graph(comptime Key: type, comptime Value: type) type {
             const index_1 = self.key_to_index.get(key_1) orelse return error.KeyNotFound;
             const index_2 = self.key_to_index.get(key_2) orelse return error.KeyNotFound;
             
+            return self._get_edge_weight_indices(index_1, index_2);
+        }
+
+        fn _get_edge_weight_indices(self: Self, index_1: usize, index_2: usize) ?u32 {
             const edges = self.out_edges.get(index_1).?;
             for (edges.items) |internal_edge| {
                 if (internal_edge.neighbor == index_2) {
@@ -252,18 +260,197 @@ fn Graph(comptime Key: type, comptime Value: type) type {
                 };
             }
         };
+
+        // -- Special Operations -- //
+
+        /// Removes a node, adding edges between its neighbors representing paths
+        /// through the node. If an edge already exists, it is updated if a new
+        /// path is shorter.
+        /// It is an error for the key to not exist in the graph.
+        fn contract(self: *Self, key: Key) !void {
+            const index = self.key_to_index.get(key) orelse return error.KeyNotFound;
+
+            var edges = self.out_edges.get(index).?;
+
+            for (edges.items) |edge_1| {
+                for (edges.items) |edge_2| {
+                    if (edge_1.neighbor == edge_2.neighbor) 
+                        continue;
+
+                    const new_weight = edge_1.weight + edge_2.weight;
+
+                    if (self._get_edge_weight_indices(edge_1.neighbor, edge_2.neighbor)) |cross_weight| {
+                        if (cross_weight > new_weight) {
+                            try self._add_edges_indices(edge_1.neighbor, edge_2.neighbor, new_weight);
+                        }
+                    }
+                    else {
+                        try self._add_edges_indices(edge_1.neighbor, edge_2.neighbor, new_weight);
+                    }
+                }
+            }
+
+            self.remove(key);
+        }
     };
 }
 
 
 const Pair = struct {i32, i32};
 
-const State = struct {
-    position: Pair,
-    keys: std.bit_set.IntegerBitSet(26),
-};
-
 const directions = [_]Pair {.{0, 1}, .{0, -1}, .{1, 0}, .{-1, 0}};
+
+
+/// Takes in an empty graph, runs DFS on tiles from
+fn build_graph(graph: *Graph(Pair, u8), tiles: std.AutoHashMap(Pair, u8), start: Pair) !void {
+    const x = start[0];
+    const y = start[1];
+
+    if (tiles.get(.{x, y})) |ch| {
+        if (graph.get(.{x, y}) == null) {
+            try graph.put(.{x, y}, ch);
+
+            for (directions) |dir| {
+                const d_x = dir[0];
+                const d_y = dir[1];
+
+                if (graph.get(.{x + d_x, y + d_y})) |_| {
+                    try graph.add_edge(start, .{x + d_x, y + d_y}, 1);
+                }
+                else {
+                    try build_graph(graph, tiles, .{x + d_x, y + d_y});
+                }
+            }
+        }
+    }
+}
+
+/// Looks at the graphs and deduces dependencies between keys.
+/// Assumes graph is tree.
+fn analyze(graph: Graph(Pair, u8), start: Pair, from: ?Pair, 
+    requirements: *std.AutoHashMap(u8, std.bit_set.IntegerBitSet(26)), curr_list: std.bit_set.IntegerBitSet(26)) !void {
+
+    const ch = graph.get(start).?;
+
+    if ('a' <= ch and ch <= 'z') {
+        try requirements.put(ch, curr_list);
+    }
+
+    var next_list = curr_list;
+
+    if ('a' <= ch and ch <= 'z') {
+        next_list.set(ch - 'a');
+    }
+    if ('A' <= ch and ch <= 'Z') {
+        next_list.set(ch - 'A');
+    }
+
+    var iter = try graph.edge_iterator(start);
+    while (iter.next()) |edge| {
+        const next = edge.neighbor;
+        
+        if (from != null and next[0] == from.?[0] and next[1] == from.?[1])
+            continue;
+
+        try analyze(graph, next, start, requirements, next_list);
+    }
+}
+
+fn transform(in_graph: *Graph(Pair, u8), alloc: std.mem.Allocator) !Graph(u8, void) {
+    var out_graph = Graph(u8, void).init(alloc);
+
+    var node_iter = in_graph.key_to_index.keyIterator();
+    while (node_iter.next()) |key| {
+        const ch = in_graph.get(key.*).?;
+
+        try out_graph.put(ch, {});
+    }
+
+    node_iter = in_graph.key_to_index.keyIterator();
+    while (node_iter.next()) |key| {
+        const ch_1 = in_graph.get(key.*).?;
+
+        var edge_iter = try in_graph.edge_iterator(key.*);
+        while (edge_iter.next()) |edge| {
+            const ch_2 = in_graph.get(edge.neighbor).?;
+
+            try out_graph.add_edge(ch_1, ch_2, edge.weight);
+        }
+    }
+
+    return out_graph;
+}
+
+const State = struct { positions: [4]u8, held_keys: std.bit_set.IntegerBitSet(26) };
+
+const QueueItem = struct { state: State, priority: u32 };
+
+fn least_priority(_ :void, first: QueueItem, second: QueueItem) std.math.Order {
+    if (first.priority < second.priority) return std.math.Order.lt;
+    if (first.priority > second.priority) return std.math.Order.gt;
+    return std.math.Order.eq;
+}
+
+fn multi_dijkstra(graphs: [4] Graph(u8, void), requirements: std.AutoHashMap(u8, std.bit_set.IntegerBitSet(26)), 
+    key_count: u32, alloc: std.mem.Allocator) !u32 {
+
+    var seen_states = std.AutoArrayHashMap(State, void).init(alloc);
+    defer seen_states.deinit();
+    
+    var queue = std.PriorityQueue(QueueItem, void, least_priority).init(alloc, {});
+    defer queue.deinit();
+
+    const start_state = State {
+        .positions = "@@@@".*, 
+        .held_keys = std.bit_set.IntegerBitSet(26).initEmpty() 
+    };
+
+    try queue.add(.{ 
+        .state = start_state,
+        .priority = 0 
+    });
+
+    while (queue.len > 0) {
+        const queue_item = queue.remove();
+        const state = queue_item.state;
+        const dist = queue_item.priority;
+
+        if (try seen_states.fetchPut(state, {})) |_| {
+            continue;
+        }
+
+        if (state.held_keys.count() == key_count) {
+            return dist;
+        }
+
+        for (graphs, 0..) |graph, i| {
+            var edge_iter = try graph.edge_iterator(state.positions[i]);
+
+            while (edge_iter.next()) |edge| {
+                const ch = edge.neighbor;
+                const next_dist = dist + edge.weight;
+
+                if (!state.held_keys.supersetOf(requirements.get(ch).?))
+                    continue;
+
+                var next_keys = state.held_keys;
+                var next_positions: [4] u8 = state.positions; 
+
+                if (ch != '@') {
+                    next_keys.set(ch - 'a');
+                }
+
+                next_positions[i] = ch;
+
+                const next_state = State { .positions = next_positions, .held_keys = next_keys };
+
+                try queue.add(.{ .state = next_state, .priority = next_dist });
+            }
+        }
+    }
+
+    return error.CouldNotCollectAllKeys;
+}
 
 
 pub fn main() !void {
@@ -298,7 +485,8 @@ pub fn main() !void {
             if (ch != '#') {
                 try tiles.put(.{ch_x, ch_y}, ch);
             }
-            else if (ch == '@') {
+            
+            if (ch == '@') {
                 maybe_start_pair = Pair {ch_x, ch_y};
                 start_pairs += 1;
             }
@@ -338,8 +526,42 @@ pub fn main() !void {
         return error.MapHasMultipleStarts;  // Could be supported for some test cases.
     }
 
-    var graph = Graph(Pair, u8).init(alloc);
-    defer graph.deinit();
+    var graphs: [4]Graph(u8, void) = undefined;
+    defer for (0..4) |i| graphs[i].deinit();
+
+    var requirements = std.AutoHashMap(u8, std.bit_set.IntegerBitSet(26)).init(alloc);
+    defer requirements.deinit();
+
+    try requirements.put('@', std.bit_set.IntegerBitSet(26).initEmpty());
+
+    for (0..4) |i| {
+        var graph = Graph(Pair, u8).init(alloc);
+        defer graph.deinit();
+
+        try build_graph(&graph, tiles, start_tiles.items[i]);
+
+        try analyze(graph, start_tiles.items[i], null, &requirements, std.bit_set.IntegerBitSet(26).initEmpty());
+
+        var pairs_to_contract = std.ArrayList(Pair).init(alloc);
+        defer pairs_to_contract.deinit();
+
+        var iter = graph.key_to_index.keyIterator();
+        while (iter.next()) |key| {
+            const ch = tiles.get(key.*).?;
+
+            if (ch == '.' or ('A' <= ch and ch <= 'Z')) {
+                try pairs_to_contract.append(key.*);
+            }
+        }
+
+        for (pairs_to_contract.items) |pair| {
+            try graph.contract(pair);
+        }
+
+        graphs[i] = try transform(&graph, alloc);
+    }
+
+    try std_out.print("{d}\n", .{try multi_dijkstra(graphs, requirements, key_count, alloc)});
 }
 
 
@@ -349,14 +571,18 @@ pub fn main() !void {
 // to tell you which keys you need to collect first, which includes both doors and
 // intermediary keys that you "have to" grab first just because they are in between.
 
-// TODO: Write contract() for the graph, and then start the algorithm itself:
+// Algorithm Description
 //
 // Build graphs from the 4 quadrants of the maze, with a node per tile.
 // DFS each graph to populate a prerequisites field on all of the keys. A key has
 // a prerequisite if it is behind a door, or behind another key (soft prerequisite: 
 // it is always beneficial to pick up that key first).
 // 
-// Contract all `.` nodes and all door nodes. We now have a graph that is only keys
+// Contract all `.` nodes and all door nodes. We now have a graph that is only keys and `@`.
+//
+// Find the transitive closure of the graph. We now have a complete graph. 
+// (SKIPPING THIS FOR NOW, the graphs are rather small. Indeed it turned out to be
+// uneccessary).
 //
 // Perform a sort of Quadruple Dijkstra. Its basically normal dijkstra, except the
 // states describe the locations of the 4 robots (so [4]u8) and a list of gathered
@@ -367,9 +593,58 @@ pub fn main() !void {
 // Each state's neighbors are basically all the states where exactly one of the
 // robots moves to a node (no '@') for which all the prerequisites are gathered.
 
-
-// Contract all '.' nodes that have degree 2 or fewer (we keep higher degree ones
-// because we want a tree).
+// Final Report: It works! And better yet, its rather fast, taking only a second
+// on ReleaseSafe, which is actually faster than part1. I think to some extent I
+// had overestimated the size of the search space (branching factor).
+//
+// I probably went overboard, but I used this last puzzle as an opportunity to play
+// with Zig's unique comptime programming / generics system. I'll be honest, I still
+// don't have as much intuition for this yet, but it helps that the system itself
+// is fairly friendly. Somehow, Zig has taken the parts of the language that define
+// types and the parts of the language that define behavior and unified them under
+// one syntax. Structs are stored in (const) variables, and can be built out of
+// other variable structs. They are manipulated like arguments passed to functions
+// in generics.
+//
+// Building the graph data structure was tricky, but I followed a test driven
+// strategy (see the giant test below). Could I have installed a graph library?
+// Probably, but I am sticking to my as of yet library-less Advent of Code, so I
+// wrote my own. Its an interesting task, and I like the result, I could see myself
+// using it again (with some further extensions and optimizations) in the future,
+// if I ever find myself in the admittedly unfortunate sitaution of doing graph
+// theory in Zig.
+//
+// Zig's priority queue is like everyone else's in that it doesn't have decrease_key.
+// You get around this the standard way, though I still hope for more.
+//
+// I did experience some memory leaks while developing the graph, and it makes me
+// think that Zig isn't as predictable as I thought, but to be fair this is 1 of
+// around 2 incidents in the entirety of 49 puzzles, and I am of course a Zig noob.
+// The issue is that I grabbed a ArrayList by value and modified it. I was under
+// the assumption that the underlying data would come with it, and it kinda did?
+// Modifying the ArrayList does impact the underlying data that it is holding as
+// a slice (fat pointer). However, it didn't impact the metadata, like the size of
+// the list. Also, it might have made a copy when the slice go too large? Regardless,
+// things go desynced, and the memory was leaked. You need to grab the array list
+// by pointer.
+//
+// C++ would do value semantics. You get a copy of the metadata AND (expensively)
+// the underlying array. However, you can easily capture by reference and manipulate
+// the original instead. In rust, if you capture a vector "by value", you move it,
+// and the old variable is invalid unless you did an explicit copy. Otherwise, you
+// borrow it and get full reference semantics. In Python, everything is reference
+// semantics by default, so you always get the full list and its metadata by reference.
+// This is a surprisingly nasty little corner of Zig. Its not unique I suppose, C
+// would do this too (hence why C++ uses RAII in the standard library). Still, kinda
+// a headache - I have to think about what is going on inside of std.ArrayList more
+// than in the others.
+//
+// Cool puzzle. Definitely the most time consuming of the bunch, though this above
+// all the others suffers from my choice to use a systems programming language.
+// I don't mind a hard puzzle, but I'm glad there was really only this one.
+//
+// Anyways, that was the last one. I'll probably write a bit more on Zig, and then
+// I'll move on.
 
 
 
@@ -432,6 +707,7 @@ test "graph works as expected" {
     try testing.expectEqual(try graph.get_edge_weight(20, 123), null);
     try testing.expectError(error.KeyNotFound, graph.remove_edge(123, -42));
 
+    
     var graph_2 = Graph(u8, void).init(alloc);
     defer graph_2.deinit();
 
@@ -477,4 +753,29 @@ test "graph works as expected" {
 
     try testing.expectEqual(graph_2.count_nodes(), 5);
     try testing.expectEqual(graph_2.count_edges(), 5);
+
+
+    var graph_3 = Graph([4]u8, void).init(alloc);
+    defer graph_3.deinit();
+
+    try graph_3.put("AAAA".*, {});
+    try graph_3.put("BBBB".*, {});
+    try graph_3.put("CCCC".*, {});
+    try graph_3.put("XXXX".*, {});
+
+    try graph_3.add_edge("AAAA".*, "BBBB".*, 9);
+    try graph_3.add_edge("BBBB".*, "CCCC".*, 7);
+
+    try graph_3.add_edge("AAAA".*, "XXXX".*, 4);
+    try graph_3.add_edge("BBBB".*, "XXXX".*, 4);
+    try graph_3.add_edge("CCCC".*, "XXXX".*, 4);
+
+    try graph_3.contract("XXXX".*);
+
+    try testing.expectEqual(graph_3.count_nodes(), 3);
+    try testing.expectEqual(graph_3.count_edges(), 3);
+
+    try testing.expectEqual(graph_3.get_edge_weight("AAAA".*, "BBBB".*), 8);
+    try testing.expectEqual(graph_3.get_edge_weight("BBBB".*, "CCCC".*), 7);  // original was shorter
+    try testing.expectEqual(graph_3.get_edge_weight("AAAA".*, "CCCC".*), 8);
 }
