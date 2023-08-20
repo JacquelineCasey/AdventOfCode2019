@@ -12,6 +12,9 @@ Note that a "const pointer" (which you can get by referencing a constant)
 acts like a pointer to a constant, even if the pointer itself is changeable. As
 a result, capturing paramters with *const seems redundant, you can just do the normal
 capture (no pointer).
+- Storing a const pointer can be a good idea, since you are gauranteed to avoid
+  a copy this way (and sometimes you want to watch something change even if you
+  don't change it yourself)
 
 ======
 
